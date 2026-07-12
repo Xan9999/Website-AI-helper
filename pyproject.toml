@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "website-ai-helper"
+version = "0.1.0"
+description = "A portable, local RAG chatbot that answers from any website's content plus your database, powered by any OpenAI-compatible LLM (e.g. llama.cpp)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Xander" }]
+keywords = ["rag", "chatbot", "llama.cpp", "embeddings", "qdrant", "website assistant"]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "openai>=1.40",
+    "qdrant-client>=1.11",
+    "requests>=2.32",
+    "beautifulsoup4>=4.12",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+website-ai-helper = "website_ai_helper.cli:main"
+
+[tool.setuptools]
+packages = ["website_ai_helper"]
+
+[tool.setuptools.package-data]
+website_ai_helper = ["web/*.html"]
