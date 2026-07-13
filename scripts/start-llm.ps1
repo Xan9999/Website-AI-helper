@@ -1,14 +1,18 @@
 # Convenience launcher for a llama.cpp CHAT server (OpenAI-compatible) on :8080.
 # Not required — you can use any OpenAI-compatible endpoint (Ollama, a remote
-# server, etc.). Set these env vars or edit the defaults.
-#   $env:LLAMA_SERVER  = full path to llama-server(.exe)
-#   $env:CHAT_MODEL    = path to a .gguf chat model (instruct, tool-capable)
+# server, etc.). Configure via the project-root .env file (KEY=value):
+#   LLAMA_SERVER   = full path to llama-server(.exe)
+#   CHAT_MODEL     = path to a .gguf chat model (instruct, tool-capable)
+# ...or set the same names as shell env vars, which take precedence over .env.
 #
 # Models are NOT stored inside this project — this app is engine-agnostic and
 # only talks HTTP to whatever server you point it at. Keep .gguf files in a
 # shared folder alongside your local-LLM tooling, e.g. "..\models\" (a sibling
-# of this project), and pass the path via $env:CHAT_MODEL below.
+# of this project).
 $ErrorActionPreference = "Stop"
+
+# Pull LLAMA_SERVER / CHAT_MODEL (etc.) from .env if not already set in shell.
+. "$PSScriptRoot\_env.ps1"
 
 # Resolve the server binary: explicit $env:LLAMA_SERVER first, else whatever
 # "llama-server" finds on PATH (works only if you've added it there yourself).

@@ -1,11 +1,16 @@
 # Convenience launcher for a llama.cpp EMBEDDING server (OpenAI-compatible) on :8081.
-#   $env:LLAMA_SERVER  = full path to llama-server(.exe)
-#   $env:EMBED_MODEL_PATH = path to a .gguf embedding model (e.g. nomic-embed-text)
+# Configure via the project-root .env file (KEY=value):
+#   LLAMA_SERVER     = full path to llama-server(.exe)
+#   EMBED_MODEL_PATH = path to a .gguf embedding model (e.g. nomic-embed-text)
+# ...or set the same names as shell env vars, which take precedence over .env.
 #
 # Models are NOT stored inside this project — keep .gguf files in a shared
 # folder alongside your local-LLM tooling, e.g. "..\models\" (a sibling of
-# this project), and pass the path via $env:EMBED_MODEL_PATH below.
+# this project).
 $ErrorActionPreference = "Stop"
+
+# Pull LLAMA_SERVER / EMBED_MODEL_PATH (etc.) from .env if not already set.
+. "$PSScriptRoot\_env.ps1"
 
 # Resolve the server binary: explicit $env:LLAMA_SERVER first, else whatever
 # "llama-server" finds on PATH (works only if you've added it there yourself).

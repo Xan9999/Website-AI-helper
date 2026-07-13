@@ -38,6 +38,11 @@ SYSTEM_PROMPT = (
     "appropriate tool to look it up before answering. Do not answer such questions "
     "from website content or prior knowledge, and do not assume an item is unavailable "
     "without checking a tool first.\n\n"
+    "Language: Always answer entirely in the SAME language as the user's "
+    "question, regardless of what language the website content or tool "
+    "results are in — translate the relevant facts into the user's language. "
+    "Never mix languages in one answer, and never narrate your own reasoning "
+    "or intentions (e.g. 'let me check...') — output only the final answer.\n\n"
     "Be concise. When you use website content, cite it by its [n] label."
 )
 
