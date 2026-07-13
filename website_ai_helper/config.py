@@ -65,6 +65,11 @@ SITE_NAME = _get("SITE_NAME", "this website")
 # --- Crawler ---
 CRAWL_MAX_PAGES = int(_get("CRAWL_MAX_PAGES", "50"))
 CRAWL_SAME_DOMAIN = _get("CRAWL_SAME_DOMAIN", "1") == "1"
+# Render pages with a headless browser (runs JavaScript) so dynamically
+# generated / single-page-app content is captured. Needs the optional
+# Playwright dependency. Slower per page, but crawling only happens at ingest.
+CRAWL_RENDER = _get("CRAWL_RENDER", "0") == "1"
+CRAWL_RENDER_WAIT_MS = int(_get("CRAWL_RENDER_WAIT_MS", "5000"))  # network-idle wait per page
 
 
 def ensure_data_dir() -> None:

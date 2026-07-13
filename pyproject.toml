@@ -21,6 +21,11 @@ dependencies = [
     "python-dotenv>=1.0",
 ]
 
+[project.optional-dependencies]
+# Rendered crawling of JavaScript/SPA sites. After installing, run:
+#   playwright install chromium
+render = ["playwright>=1.40"]
+
 [project.scripts]
 website-ai-helper = "website_ai_helper.cli:main"
 

@@ -3,8 +3,13 @@
 # server, etc.). Set these env vars or edit the defaults.
 #   $env:LLAMA_SERVER  = full path to llama-server(.exe)
 #   $env:CHAT_MODEL    = path to a .gguf chat model (instruct, tool-capable)
+#
+# Models are NOT stored inside this project — this app is engine-agnostic and
+# only talks HTTP to whatever server you point it at. Keep .gguf files in a
+# shared folder alongside your local-LLM tooling, e.g. "..\models\" (a sibling
+# of this project), and pass the path via $env:CHAT_MODEL below.
 $ErrorActionPreference = "Stop"
 $server = if ($env:LLAMA_SERVER) { $env:LLAMA_SERVER } else { "llama-server" }
-$model  = if ($env:CHAT_MODEL)   { $env:CHAT_MODEL }   else { "models\chat.gguf" }
+$model  = if ($env:CHAT_MODEL)   { $env:CHAT_MODEL }   else { "..\models\chat.gguf" }
 
 & $server -m "$model" -ngl 99 -c 8192 --jinja --host 127.0.0.1 --port 8080 --alias local-chat

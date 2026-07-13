@@ -48,6 +48,8 @@ def _cmd_ingest(args: argparse.Namespace) -> None:
         os.environ["CRAWL_MAX_PAGES"] = str(args.max_pages)
     if args.all_domains:
         os.environ["CRAWL_SAME_DOMAIN"] = "0"
+    if args.render:
+        os.environ["CRAWL_RENDER"] = "1"
     if args.site_name:
         os.environ["SITE_NAME"] = args.site_name
     # Import AFTER setting env so config picks up the overrides.
@@ -76,6 +78,9 @@ def main() -> None:
     pi.add_argument("--collection", help="Knowledge-base name (one per site).")
     pi.add_argument("--max-pages", type=int, help="Max pages to crawl.")
     pi.add_argument("--all-domains", action="store_true", help="Follow links off the start domain.")
+    pi.add_argument("--render", action="store_true",
+                    help="Render pages with a headless browser (runs JavaScript) to "
+                         "capture dynamic/SPA content. Needs the [render] extra.")
     pi.add_argument("--site-name", help="Human name of the site (used in answers).")
     pi.set_defaults(func=_cmd_ingest)
 
