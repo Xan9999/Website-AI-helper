@@ -49,8 +49,23 @@ website-ai-helper serve --collection demo
 
 ### Bring your own models (llama.cpp example)
 
-Any OpenAI-compatible server works; point `.env` at it. For llama.cpp, start
-two servers (chat on :8080, embeddings on :8081) — see `scripts/`.
+Any OpenAI-compatible server works; point `.env` at it. `llama.cpp` is a
+separate project (not bundled with this package) that provides `llama-server`
+— a binary that loads a `.gguf` model and exposes it over an OpenAI-compatible
+API + web UI.
+
+**Getting `llama-server`:**
+- **Prebuilt (easiest):** download the asset matching your OS/GPU from a
+  [llama.cpp release](https://github.com/ggml-org/llama.cpp/releases) — plain
+  CPU build, or `*-vulkan-*` / `*-cuda-*` for GPU (see the Vulkan section below
+  for GPU setup specifics). Extract and run — no install step.
+- **Build from source:** clone
+  [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) and follow its
+  build docs (`cmake -B build && cmake --build build --config Release`).
+
+Either way you get `llama-server(.exe)` — point `$env:LLAMA_SERVER` at wherever
+you put it, start two instances (chat on :8080, embeddings on :8081) — see
+`scripts/`.
 
 **Model files are not stored inside this project.** This app only speaks HTTP
 to whatever server you run — it's engine-agnostic — so `.gguf` weights belong
