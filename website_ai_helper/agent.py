@@ -86,7 +86,10 @@ def _stream_pass(client, messages: list[dict], use_tools: bool) -> Iterator[dict
     """Stream ONE completion. Yields {"type":"token",...} for content deltas and
     returns the accumulated tool calls ({"id","name","args"}) via `yield from`."""
     kwargs = dict(model=config.LLM_MODEL, messages=messages,
-                  temperature=config.TEMPERATURE, stream=True)
+                  temperature=config.TEMPERATURE, stream=True,
+                  max_tokens=config.MAX_TOKENS,
+                  frequency_penalty=config.FREQUENCY_PENALTY,
+                  presence_penalty=config.PRESENCE_PENALTY)
     if use_tools:
         kwargs["tools"] = structured.TOOLS
         kwargs["tool_choice"] = "auto"

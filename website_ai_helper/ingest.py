@@ -212,6 +212,11 @@ def ingest_pages(pages: list[dict], batch_size: int = 32) -> int:
 def crawl_and_ingest(url: str, render: bool | None = None) -> int:
     render = config.CRAWL_RENDER if render is None else render
     config.ensure_data_dir()
+
+    # Fail fast on a locked/unavailable vector store BEFORE crawling — a long
+    # crawl finishing only to fail at the last step (storing) wastes real time.
+    vectorstore.get_client()
+
     mode = "rendered/JS" if render else "static"
     print(f"Crawling {url} (max {config.CRAWL_MAX_PAGES} pages, {mode}) "
           f"into collection '{config.QDRANT_COLLECTION}'...")

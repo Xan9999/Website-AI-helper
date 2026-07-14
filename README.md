@@ -154,6 +154,38 @@ doesn't affect answer latency. Tune the per-page settle time with
 `CRAWL_RENDER_WAIT_MS` (default 5000). If a page still comes back empty, its
 content likely loads on scroll/interaction, which this mode doesn't trigger.
 
+### Vector store: run a real Qdrant server (recommended)
+
+By default the vector store is an **embedded local folder** (`./data/qdrant`)
+— zero setup, but it only allows **one process** to open it at a time. That
+means `ingest` and `serve` can't run simultaneously, and starting one while
+the other has it open fails outright (or, if a process dies mid-write,
+worse). This gets painful fast once you're doing real ingests.
+
+**Fix: run a real Qdrant server** — no Docker required, a small (~29 MB)
+native binary:
+
+```powershell
+# One-time: download from https://github.com/qdrant/qdrant/releases
+#   (qdrant-x86_64-pc-windows-msvc.zip) and extract to ..\qdrant\ (a sibling
+#   of this project), or set QDRANT_BIN to wherever you put it.
+.\scripts\start-qdrant.ps1
+```
+
+Then in `.env`:
+```
+QDRANT_URL=http://127.0.0.1:6333
+```
+Now `ingest` and `serve` can run at the same time, and one Qdrant instance
+holds every site's collection.
+
+**Migrating existing data** from the embedded folder to a server: open both
+with `qdrant_client` (`QdrantClient(path="data/qdrant")` and
+`QdrantClient(url="http://127.0.0.1:6333")`), then for each collection,
+recreate it on the server with the same `VectorParams` and copy points across
+with `scroll(..., with_vectors=True)` → `upsert(...)` (convert each `Record`
+to a `PointStruct` first). Stop anything using the embedded folder first.
+
 ## Configuration
 
 All via `.env` or CLI flags (see `.env.example`). Common knobs:
@@ -162,9 +194,10 @@ All via `.env` or CLI flags (see `.env.example`). Common knobs:
 |---|---|
 | `LLM_BASE_URL` / `EMBED_BASE_URL` | Your chat / embedding endpoints |
 | `EMBED_DIM` | Embedding dimensionality (must match the model) |
-| `QDRANT_URL` | Empty = embedded local folder; else a Qdrant server |
+| `QDRANT_URL` | Empty = embedded local folder (single-writer); set to a Qdrant server URL to allow concurrent ingest+serve |
 | `QDRANT_COLLECTION` | Knowledge base name — **one per site** |
 | `TOP_K`, `CHUNK_SIZE` | Retrieval tuning |
+| `FREQUENCY_PENALTY`, `PRESENCE_PENALTY`, `MAX_TOKENS` | Anti-repetition / runaway-generation guards |
 | `CRAWL_MAX_PAGES`, `CRAWL_SAME_DOMAIN` | Crawl scope |
 | `CRAWL_RENDER`, `CRAWL_RENDER_WAIT_MS` | Render JS with a headless browser (`--render`) and settle time |
 
@@ -205,12 +238,21 @@ streams the grounded answer back — following a strict source-precedence rule
 
 ## Notes / limitations
 
-- **Embedded Qdrant is single-writer**: ingest with the server stopped, or run a
-  Qdrant server (`docker run -p 6333:6333 qdrant/qdrant`, set `QDRANT_URL`) to do
-  both at once.
+- **Embedded Qdrant (the default) is single-writer**: `ingest` and `serve` can't
+  run at the same time, and a long ingest that hits this fails only at the very
+  last step (after crawling everything) — see "Vector store" above for the fix
+  (a real Qdrant server, no Docker needed).
 - Grounding quality depends on the chat model; a 7B-class instruct model is a
   good baseline. Small models may under-call tools.
 - Re-ingest after changing `EMBED_DIM`/`CHUNK_SIZE` (vector dimensions must match).
+- Use a genuinely multilingual embedding model (e.g. `bge-m3`) for non-English
+  sites — English-centric models like `nomic-embed-text` retrieve poorly outside
+  English, independent of how well the chat model itself handles the language.
+- **Small local chat models can occasionally degenerate** — repeating a
+  sentence, sometimes drifting into another language mid-repeat — especially
+  on vague queries with weak/ambiguous retrieval matches. `FREQUENCY_PENALTY`
+  / `PRESENCE_PENALTY` (default 0.4) and `MAX_TOKENS` (default 500) reduce and
+  bound this; a larger/stronger chat model is the more thorough fix.
 
 ## License
 

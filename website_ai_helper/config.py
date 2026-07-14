@@ -60,6 +60,14 @@ CHUNK_OVERLAP = int(_get("CHUNK_OVERLAP", "160"))
 MAX_TOOL_ITERS = int(_get("MAX_TOOL_ITERS", "1"))
 SCORE_THRESHOLD = float(_get("SCORE_THRESHOLD", "0.0"))
 TEMPERATURE = float(_get("TEMPERATURE", "0.2"))
+# Penalize repeated tokens — the main lever against degenerate loops (e.g. a
+# model repeating the same sentence, sometimes drifting into another language
+# mid-repeat). 0 = off; llama.cpp/OpenAI-compatible servers accept 0-2.
+FREQUENCY_PENALTY = float(_get("FREQUENCY_PENALTY", "0.4"))
+PRESENCE_PENALTY = float(_get("PRESENCE_PENALTY", "0.4"))
+# Hard cap on answer length — bounds how far a runaway/looping generation can
+# go before it's cut off, regardless of what caused it.
+MAX_TOKENS = int(_get("MAX_TOKENS", "500"))
 SITE_NAME = _get("SITE_NAME", "this website")
 
 # --- Crawler ---

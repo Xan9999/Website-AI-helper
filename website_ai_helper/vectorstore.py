@@ -23,7 +23,20 @@ def get_client() -> QdrantClient:
             _client = QdrantClient(url=config.QDRANT_URL)
         else:
             config.ensure_data_dir()
-            _client = QdrantClient(path=config.QDRANT_PATH)
+            try:
+                _client = QdrantClient(path=config.QDRANT_PATH)
+            except RuntimeError as exc:
+                if "already accessed by another instance" not in str(exc):
+                    raise
+                raise SystemExit(
+                    f"Cannot open the vector store at '{config.QDRANT_PATH}' — it's "
+                    "already open in another process (e.g. `website-ai-helper serve` "
+                    "is running). Embedded Qdrant only allows ONE process at a time.\n"
+                    "Fix: stop that process first, then retry — or avoid this "
+                    "entirely by running a real Qdrant server and setting QDRANT_URL "
+                    "in .env (e.g. `docker run -p 6333:6333 qdrant/qdrant`), which "
+                    "lets ingest and serve run at the same time."
+                ) from exc
     return _client
 
 
