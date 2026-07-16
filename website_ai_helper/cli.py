@@ -62,8 +62,14 @@ def _cmd_serve(args: argparse.Namespace) -> None:
         os.environ["QDRANT_COLLECTION"] = args.collection
     if args.site_name:
         os.environ["SITE_NAME"] = args.site_name
+    # HTTPS: needed whenever the widget is embedded on an https:// site
+    # (browsers block plain-http scripts on https pages, and a TLS request
+    # hitting a plain-HTTP server logs "Invalid HTTP request received").
+    certfile = args.ssl_certfile or os.getenv("SSL_CERTFILE") or None
+    keyfile = args.ssl_keyfile or os.getenv("SSL_KEYFILE") or None
     import uvicorn
-    uvicorn.run("website_ai_helper.main:app", host=args.host, port=args.port)
+    uvicorn.run("website_ai_helper.main:app", host=args.host, port=args.port,
+                ssl_certfile=certfile, ssl_keyfile=keyfile)
 
 
 def main() -> None:
@@ -89,6 +95,8 @@ def main() -> None:
     ps.add_argument("--site-name", help="Human name of the site (used in answers).")
     ps.add_argument("--host", default="127.0.0.1")
     ps.add_argument("--port", type=int, default=8000)
+    ps.add_argument("--ssl-certfile", help="PEM certificate chain — serve HTTPS (or env SSL_CERTFILE).")
+    ps.add_argument("--ssl-keyfile", help="PEM private key — serve HTTPS (or env SSL_KEYFILE).")
     ps.set_defaults(func=_cmd_serve)
 
     pn = sub.add_parser("init", help="Write a starter .env in the current folder.")

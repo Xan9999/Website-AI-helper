@@ -36,6 +36,54 @@ def clean_html(html: str) -> tuple[str, str]:
     return _extract_text_title(BeautifulSoup(html, "html.parser"))
 
 
+def _is_pdf_url(url: str) -> bool:
+    return urlparse(url).path.lower().endswith(".pdf")
+
+
+def _fetch_pdf_page(url: str) -> dict | None:
+    """Download a PDF and extract its text, returning a {"url","title","text"}
+    page dict like the HTML path produces, or None if it can't be read.
+
+    PDFs are static files, so this uses a plain HTTP GET even during rendered
+    (Playwright) crawls. Detection is by the .pdf URL extension — a PDF served
+    from an extensionless URL is not picked up."""
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        print(f"  skip {url}: pypdf not installed (pip install pypdf)")
+        return None
+
+    import io
+
+    try:
+        resp = requests.get(url, headers=_HEADERS, timeout=30)
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"  skip {url}: {exc}")
+        return None
+    if len(resp.content) > config.CRAWL_PDF_MAX_MB * 1024 * 1024:
+        print(f"  skip {url}: PDF larger than {config.CRAWL_PDF_MAX_MB} MB")
+        return None
+
+    try:
+        reader = PdfReader(io.BytesIO(resp.content))
+        text = "\n".join(filter(None, (pg.extract_text() for pg in reader.pages)))
+    except Exception as exc:  # pypdf raises many exception types on bad files
+        print(f"  skip {url}: unreadable PDF ({exc})")
+        return None
+
+    lines = [ln.strip() for ln in text.splitlines()]
+    text = "\n".join(ln for ln in lines if ln)
+    if not text:
+        # Scanned/image-only PDF — no text layer to extract.
+        print(f"  skip {url}: PDF has no extractable text")
+        return None
+
+    meta_title = (reader.metadata.title or "").strip() if reader.metadata else ""
+    title = meta_title or urlparse(url).path.rsplit("/", 1)[-1]
+    return {"url": url, "title": title, "text": text}
+
+
 def chunk_text(text: str, size: int, overlap: int) -> list[str]:
     chunks, i, n = [], 0, len(text)
     step = max(1, size - overlap)
@@ -140,6 +188,15 @@ def _bfs_crawl(start_url: str, max_pages: int, same_domain: bool, fetch) -> list
         if url in seen:
             continue
         seen.add(url)
+
+        if _is_pdf_url(url):
+            if not config.CRAWL_PDFS:
+                continue
+            pdf_page = _fetch_pdf_page(url)
+            if pdf_page:
+                pages.append(pdf_page)
+                print(f"[{len(pages)}/{max_pages}] {url} ({len(pdf_page['text'])} chars) [pdf]")
+            continue  # PDFs contribute no links to follow
 
         html = fetch(url)
         if not html:

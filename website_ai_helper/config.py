@@ -70,9 +70,27 @@ PRESENCE_PENALTY = float(_get("PRESENCE_PENALTY", "0.4"))
 MAX_TOKENS = int(_get("MAX_TOKENS", "500"))
 SITE_NAME = _get("SITE_NAME", "this website")
 
+# --- CORS ---
+# Comma-separated list of origins allowed to call /chat from a browser, e.g.
+# "https://acme.com,https://www.acme.com". Empty (default) = allow any origin,
+# fine for local testing but should be locked down before going live.
+ALLOWED_ORIGINS = [o.strip() for o in _get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+
+# --- Conversation logging + QA review site ---
+# Every chat turn (client message, agent reply, latency) is logged to this
+# SQLite file for quality assurance. Transcripts are served at /qa, protected
+# by QA_TOKEN — if the token is empty, the /qa site is DISABLED (logging still
+# happens). Open /qa?token=<QA_TOKEN> to review conversations.
+CONVERSATIONS_DB = _get("CONVERSATIONS_DB", str(DATA_DIR / "conversations.db"))
+QA_TOKEN = _get("QA_TOKEN", "")
+
 # --- Crawler ---
 CRAWL_MAX_PAGES = int(_get("CRAWL_MAX_PAGES", "50"))
 CRAWL_SAME_DOMAIN = _get("CRAWL_SAME_DOMAIN", "1") == "1"
+# Also download linked PDF files (same-domain rule applies) and ingest their
+# text. Detected by the .pdf URL extension. Set to 0 to skip PDFs entirely.
+CRAWL_PDFS = _get("CRAWL_PDFS", "1") == "1"
+CRAWL_PDF_MAX_MB = int(_get("CRAWL_PDF_MAX_MB", "20"))  # skip PDFs larger than this
 # Render pages with a headless browser (runs JavaScript) so dynamically
 # generated / single-page-app content is captured. Needs the optional
 # Playwright dependency. Slower per page, but crawling only happens at ingest.

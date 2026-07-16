@@ -27,6 +27,7 @@
   .msg.user { justify-content:flex-end; }
   .msg.user .bubble { background:var(--accent); color:#fff; border-bottom-right-radius:4px; }
   .msg.bot .bubble { background:#fff; border:1px solid #e5e7eb; border-bottom-left-radius:4px; }
+  .msg.bot .bubble a { color:var(--accent); text-decoration:underline; word-break:break-all; }
   .sources { font-size:11px; color:var(--muted); margin-top:6px; }
   .sources a { color:var(--accent); text-decoration:none; }
   .composer { display:flex; border-top:1px solid #e5e7eb; padding:10px; gap:8px; background:#fff; }
@@ -68,6 +69,10 @@ const els = {
   send: document.getElementById("send"),
 };
 const history = [];
+// One id per chat session so the server can group turns into a conversation
+// (used by the QA review site to reconstruct transcripts + durations).
+const conversationId = (crypto.randomUUID && crypto.randomUUID())
+  || (Date.now().toString(36) + Math.random().toString(36).slice(2));
 
 els.toggle.onclick = () => els.panel.classList.toggle("open");
 
@@ -81,6 +86,42 @@ function addMsg(role, text) {
   els.msgs.appendChild(wrap);
   els.msgs.scrollTop = els.msgs.scrollHeight;
   return bubble;
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// The model is told not to append its own "Sources:" line (the widget renders
+// sources beside the bubble), but strip one defensively if it does anyway.
+function stripSourcesLine(s) {
+  return s.replace(/[\s\n]*(?:Sources|Viri)\s*:?\s*(?:\[\d+\][\s,;]*)+[\s.]*$/i, "");
+}
+
+// Render bot text safely with clickable links: supports markdown [text](url),
+// autolinks <https://...>, and bare https://... URLs. Everything else is
+// HTML-escaped, so model output can't inject markup.
+function renderMessage(raw) {
+  const text = stripSourcesLine(raw);
+  // Tokenize on the raw string, escape each piece.
+  const linkRe = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|<(https?:\/\/[^>\s]+)>|(https?:\/\/[^\s<>"')\]]+)/g;
+  const parts = [];
+  let last = 0, m;
+  while ((m = linkRe.exec(text)) !== null) {
+    parts.push(escapeHtml(text.slice(last, m.index)));
+    let label, url, trailing = "";
+    if (m[1]) { label = m[1]; url = m[2]; }
+    else { url = m[3] || m[4]; label = url; }
+    const punct = url.match(/[.,;:!?]+$/);           // don't swallow end-of-sentence punctuation
+    if (punct) { trailing = punct[0]; url = url.slice(0, -trailing.length); if (!m[1]) label = url; }
+    parts.push('<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener">'
+               + escapeHtml(label) + '</a>' + escapeHtml(trailing));
+    last = m.index + m[0].length;
+  }
+  parts.push(escapeHtml(text.slice(last)));
+  // Runs on already-escaped text, so it can only produce the <strong> tag itself.
+  return parts.join("").replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
 }
 
 // Snapshot of the page the user is on (works when embedded on any site).
@@ -117,7 +158,8 @@ els.form.onsubmit = async (e) => {
     const resp = await fetch(BACKEND + "/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, history, current_page: currentPage() }),
+      body: JSON.stringify({ message, history, current_page: currentPage(),
+                             conversation_id: conversationId }),
     });
 
     const reader = resp.body.getReader();
@@ -133,7 +175,7 @@ els.form.onsubmit = async (e) => {
         const line = part.replace(/^data: /, "").trim();
         if (!line) continue;
         const evt = JSON.parse(line);
-        if (evt.type === "token") { answer += evt.text; bubble.textContent = answer; }
+        if (evt.type === "token") { answer += evt.text; bubble.innerHTML = renderMessage(answer); }
         else if (evt.type === "sources") { renderSources(bubble, evt.sources); }
         else if (evt.type === "error") { bubble.textContent = "⚠️ " + evt.message; }
         els.msgs.scrollTop = els.msgs.scrollHeight;
@@ -142,7 +184,7 @@ els.form.onsubmit = async (e) => {
     history.push({ role: "user", content: message });
     history.push({ role: "assistant", content: answer });
   } catch (err) {
-    bubble.textContent = "⚠️ Could not reach the assistant. Is the backend running?";
+    bubble.textContent = "Could not reach the assistant. Is the backend running?";
   } finally {
     els.send.disabled = false;
     els.input.focus();

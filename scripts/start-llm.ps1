@@ -3,6 +3,12 @@
 # server, etc.). Configure via the project-root .env file (KEY=value):
 #   LLAMA_SERVER   = full path to llama-server(.exe)
 #   CHAT_MODEL     = path to a .gguf chat model (instruct, tool-capable)
+#   CPU_MOE        = "1" to keep Mixture-of-Experts weights on CPU/RAM instead
+#                    of VRAM — lets a big MoE model run on a GPU with less VRAM
+#                    than the full model size. Default "0": measured on a GTX
+#                    1080 Ti, CPU-offloaded 20B+ MoE models ran 8-20x slower
+#                    than a dense 7B fully on GPU, so prefer a dense model
+#                    that fits your VRAM.
 # ...or set the same names as shell env vars, which take precedence over .env.
 #
 # Models are NOT stored inside this project — this app is engine-agnostic and
@@ -37,4 +43,12 @@ if (-not (Test-Path $model)) {
     exit 1
 }
 
-& $server -m "$model" -ngl 99 -c 8192 --jinja --host 127.0.0.1 --port 8080 --alias local-chat
+$cpuMoe = if ($env:CPU_MOE) { $env:CPU_MOE } else { "0" }
+# @(...) around the whole if/else is required: without it, PowerShell unwraps
+# the single-element array from the "1" branch into a bare string, and
+# splatting a string with @moeArgs below splats it character-by-character
+# (each becoming its own arg) instead of as one "--cpu-moe" token — which
+# llama-server then rejects with a confusing "invalid argument: -".
+$moeArgs = @(if ($cpuMoe -eq "1") { "--cpu-moe" })
+
+& $server -m "$model" -ngl 99 -c 8192 --jinja --host 127.0.0.1 --port 8080 --alias local-chat @moeArgs

@@ -43,7 +43,22 @@ SYSTEM_PROMPT = (
     "results are in — translate the relevant facts into the user's language. "
     "Never mix languages in one answer, and never narrate your own reasoning "
     "or intentions (e.g. 'let me check...') — output only the final answer.\n\n"
-    "Be concise. When you use website content, cite it by its [n] label."
+    "ANSWER, don't redirect: when the provided context contains the actual facts "
+    "(dates, times, prices, requirements, steps), state those facts directly in "
+    "your answer — never reply with only 'you can find it on page X'. A link is a "
+    "supplement to a substantive answer, not a substitute for one. This includes "
+    "questions phrased as 'where can I find X' or 'where is X': the user wants X "
+    "itself, so give them X from the context first, then add the page link. "
+    "Example: asked 'where are the course dates?', list the actual dates from the "
+    "context, then link the page for the full/updated list. Only point to a page "
+    "without giving the facts when the context genuinely does not contain them.\n\n"
+    "Be concise. When you use website content, cite it inline by its [n] label. "
+    "Do NOT append a separate list of sources or a 'Sources:' line at the end — "
+    "the chat interface already displays the sources next to your answer. "
+    "When you point the user to a page, write the URL as a markdown link, e.g. "
+    "[product page](https://example.com/products/item), and copy URLs EXACTLY "
+    "character-for-character from the provided context — never retype or "
+    "reconstruct them."
 )
 
 
@@ -70,7 +85,12 @@ def _build_user_message(message: str, chunks: list[dict], current_page: dict | N
             f"Title: {current_page.get('title', '')}\n"
             f"{current_page.get('text', '')[:3000]}"
         )
-    sections.append(f"---\nUser question: {message}")
+    sections.append(
+        f"---\nUser question: {message}\n"
+        "(Reminder: answer with the concrete facts — dates, times, prices, steps — "
+        "found in the context above, in the user's language. Do NOT merely point "
+        "to a page; add a link only after giving the facts.)"
+    )
     return "\n\n".join(sections)
 
 
@@ -89,7 +109,12 @@ def _stream_pass(client, messages: list[dict], use_tools: bool) -> Iterator[dict
                   temperature=config.TEMPERATURE, stream=True,
                   max_tokens=config.MAX_TOKENS,
                   frequency_penalty=config.FREQUENCY_PENALTY,
-                  presence_penalty=config.PRESENCE_PENALTY)
+                  presence_penalty=config.PRESENCE_PENALTY,
+                  # Qwen3's hybrid thinking mode is on by default and would
+                  # otherwise burn the whole token budget on hidden
+                  # <think>...</think> reasoning instead of the answer.
+                  # Models without this template var (e.g. Qwen2.5) ignore it.
+                  extra_body={"chat_template_kwargs": {"enable_thinking": False}})
     if use_tools:
         kwargs["tools"] = structured.TOOLS
         kwargs["tool_choice"] = "auto"
@@ -113,11 +138,11 @@ def _stream_pass(client, messages: list[dict], use_tools: bool) -> Iterator[dict
 
 
 def run_chat(message: str, history: list[dict] | None = None,
-             current_page: dict | None = None) -> Iterator[dict]:
+             current_page: dict | None = None, collection: str | None = None) -> Iterator[dict]:
     history = history or []
     client = chat_client()
 
-    chunks = retrieve(message)
+    chunks = retrieve(message, collection=collection)
     yield {"type": "sources", "sources": _sources(chunks)}
 
     messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT.format(site=config.SITE_NAME)}]

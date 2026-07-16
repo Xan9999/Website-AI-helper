@@ -19,6 +19,7 @@ dependencies = [
     "requests>=2.32",
     "beautifulsoup4>=4.12",
     "python-dotenv>=1.0",
+    "pypdf>=4.0",
 ]
 
 [project.optional-dependencies]
@@ -33,4 +34,4 @@ website-ai-helper = "website_ai_helper.cli:main"
 packages = ["website_ai_helper"]
 
 [tool.setuptools.package-data]
-website_ai_helper = ["web/*.html"]
+website_ai_helper = ["web/*.html", "web/*.js"]

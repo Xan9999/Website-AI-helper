@@ -16,8 +16,12 @@ models/
 # Secrets / local config
 .env
 
+# Private internal docs
+ARCHITECTURE.md
+
 # OS / editor
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+.qdrant-initialized
