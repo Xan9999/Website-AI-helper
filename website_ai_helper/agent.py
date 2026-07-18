@@ -19,7 +19,14 @@ from website_ai_helper.llm import chat_client
 from website_ai_helper.retrieval import retrieve
 
 SYSTEM_PROMPT = (
-    "You are a helpful assistant for {site}.\n"
+    "You are a helpful assistant for {site}, embedded ON the site itself — the "
+    "visitor is already here. Speak as part of the site ('we', 'our products'), "
+    "never in third person ('they', 'their website'). NEVER tell the visitor to "
+    "visit 'the official website' or 'learn more on the website' — they are on it. "
+    "Link only to a SPECIFIC page when it directly answers the question (a product, "
+    "a schedule, a contact page); never link the homepage or the site in general, "
+    "and never end with a filler line like 'For more information, visit...'. When "
+    "the answer is 'no' or off-topic, include no link at all.\n"
     "Answer using ONLY the information provided in this conversation: the Website "
     "content, the Current page, and any Tool results. If none of them contain the "
     "answer, say you don't know and suggest where the user might look. Never invent "
@@ -83,13 +90,18 @@ def _build_user_message(message: str, chunks: list[dict], current_page: dict | N
             "hard facts) ===\n"
             f"URL: {current_page.get('url', '')}\n"
             f"Title: {current_page.get('title', '')}\n"
-            f"{current_page.get('text', '')[:3000]}"
+            f"{current_page.get('text', '')[:config.PAGE_MAX_CHARS]}"
         )
     sections.append(
         f"---\nUser question: {message}\n"
         "(Reminder: answer with the concrete facts — dates, times, prices, steps — "
         "found in the context above, in the user's language. Do NOT merely point "
-        "to a page; add a link only after giving the facts.)"
+        "to a page. A link is allowed only if that specific page directly answers "
+        "the question — never the homepage, and never a generic 'for more "
+        "information/details visit...' closing line. If the answer is 'no' or the "
+        "question is off-topic, politely say no in a sentence and briefly mention "
+        "what we DO offer instead — but include no link. Never say 'on our "
+        "website' / 'on this site' — the visitor is already browsing it.)"
     )
     return "\n\n".join(sections)
 
@@ -137,15 +149,66 @@ def _stream_pass(client, messages: list[dict], use_tools: bool) -> Iterator[dict
     return [acc[i] for i in sorted(acc)]
 
 
+def _rewrite_query(client, history: list[dict], message: str) -> str:
+    """Rewrite a follow-up message into a standalone search query.
+
+    Why: retrieval embeds ONLY the latest message. In a conversation —
+    'do you make winders?' -> 'how much does it cost?' — the follow-up embeds
+    as a generic price question with no subject, so vector search returns
+    junk and the answer is built on weak context. One small, non-streamed LLM
+    call resolves pronouns/ellipsis from the recent history ('how much does
+    the automatic winder cost?') before embedding. Only runs when history
+    exists, so the first question of a conversation pays zero extra latency.
+    Any failure falls back to the raw message — retrieval quality degrades to
+    the old behavior, never worse."""
+    convo = "\n".join(
+        f"{'Visitor' if m.get('role') == 'user' else 'Assistant'}: {m.get('content', '')[:300]}"
+        for m in history[-4:]
+    )
+    try:
+        resp = client.chat.completions.create(
+            model=config.LLM_MODEL,
+            messages=[{
+                "role": "user",
+                "content": (
+                    "Rewrite the visitor's last message as ONE standalone search query "
+                    "for the website's knowledge base. Words like 'it', 'that', 'they', "
+                    "'one' MUST be replaced with the thing they refer to in the "
+                    "conversation (e.g. after discussing winders, 'how much does it "
+                    "cost?' becomes 'how much does the winder cost?'). Keep the "
+                    "visitor's language. If the message is already self-contained, "
+                    "return it unchanged. Output ONLY the query, nothing else.\n\n"
+                    f"Conversation:\n{convo}\n\nVisitor's last message: {message}"
+                ),
+            }],
+            temperature=0.0,
+            max_tokens=80,
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+        )
+        rewritten = (resp.choices[0].message.content or "").strip().strip('"')
+        # A degenerate rewrite (empty, or way longer than a search query
+        # should be) means the model went off the rails — keep the original.
+        if rewritten and len(rewritten) <= max(200, 3 * len(message)):
+            return rewritten
+    except Exception:
+        pass
+    return message
+
+
 def run_chat(message: str, history: list[dict] | None = None,
              current_page: dict | None = None, collection: str | None = None) -> Iterator[dict]:
     history = history or []
     client = chat_client()
 
-    chunks = retrieve(message, collection=collection)
+    query = message
+    if history and config.QUERY_REWRITE:
+        query = _rewrite_query(client, history, message)
+
+    chunks = retrieve(query, collection=collection)
     yield {"type": "sources", "sources": _sources(chunks)}
 
-    messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT.format(site=config.SITE_NAME)}]
+    messages: list[dict] = [{"role": "system",
+                             "content": SYSTEM_PROMPT.format(site=config.site_name_for(collection))}]
     messages += history[-6:]
     messages.append({"role": "user", "content": _build_user_message(message, chunks, current_page)})
 

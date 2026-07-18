@@ -58,6 +58,10 @@ TOP_K = int(_get("TOP_K", "3"))
 CHUNK_SIZE = int(_get("CHUNK_SIZE", "800"))
 CHUNK_OVERLAP = int(_get("CHUNK_OVERLAP", "160"))
 MAX_TOOL_ITERS = int(_get("MAX_TOOL_ITERS", "1"))
+# Minimum retrieval score to keep a chunk. Only meaningful for LEGACY
+# (dense-only) collections, where scores are cosine similarities; hybrid
+# collections return rank-fusion scores on a different scale (~0.01-0.03),
+# so leave this at 0 for them.
 SCORE_THRESHOLD = float(_get("SCORE_THRESHOLD", "0.0"))
 TEMPERATURE = float(_get("TEMPERATURE", "0.2"))
 # Penalize repeated tokens — the main lever against degenerate loops (e.g. a
@@ -68,7 +72,30 @@ PRESENCE_PENALTY = float(_get("PRESENCE_PENALTY", "0.4"))
 # Hard cap on answer length — bounds how far a runaway/looping generation can
 # go before it's cut off, regardless of what caused it.
 MAX_TOKENS = int(_get("MAX_TOKENS", "500"))
+# Max characters of the visitor's current page injected into the prompt.
+# Bigger = better "this page" answers but slower time-to-first-token (every
+# ~4 chars is a prompt token the GPU must process before answering).
+PAGE_MAX_CHARS = int(_get("PAGE_MAX_CHARS", "1500"))
+# Rewrite follow-up messages into standalone search queries before retrieval
+# (resolves 'how much does IT cost?' using the conversation). Costs one small
+# extra LLM call per follow-up turn; first messages are never rewritten.
+QUERY_REWRITE = _get("QUERY_REWRITE", "1") == "1"
 SITE_NAME = _get("SITE_NAME", "this website")
+# Per-collection site names for multi-tenant serving, e.g.
+#   SITE_NAMES=acme=Acme Shop,adr=Adrlandia
+# The agent introduces itself as "assistant for <name>". Collections without
+# an entry fall back to SITE_NAME.
+_SITE_NAMES: dict[str, str] = {}
+for _pair in _get("SITE_NAMES", "").split(","):
+    if "=" in _pair:
+        _k, _v = _pair.split("=", 1)
+        if _k.strip() and _v.strip():
+            _SITE_NAMES[_k.strip()] = _v.strip()
+
+
+def site_name_for(collection: str | None) -> str:
+    """Site name for a request's collection (None = the default collection)."""
+    return _SITE_NAMES.get(collection or QDRANT_COLLECTION, SITE_NAME)
 
 # --- CORS ---
 # Comma-separated list of origins allowed to call /chat from a browser, e.g.
@@ -95,6 +122,13 @@ CRAWL_PDF_MAX_MB = int(_get("CRAWL_PDF_MAX_MB", "20"))  # skip PDFs larger than 
 # generated / single-page-app content is captured. Needs the optional
 # Playwright dependency. Slower per page, but crawling only happens at ingest.
 CRAWL_RENDER = _get("CRAWL_RENDER", "0") == "1"
+# Strip lines repeated across many crawled pages (cookie banners, nav menus,
+# footers) before chunking/embedding — see ingest.strip_boilerplate(). A line
+# is boilerplate when it appears on >= BOILERPLATE_MIN_PAGES pages AND on
+# >= BOILERPLATE_PAGE_FRACTION of all pages.
+BOILERPLATE_STRIP = _get("BOILERPLATE_STRIP", "1") == "1"
+BOILERPLATE_MIN_PAGES = int(_get("BOILERPLATE_MIN_PAGES", "4"))
+BOILERPLATE_PAGE_FRACTION = float(_get("BOILERPLATE_PAGE_FRACTION", "0.3"))
 CRAWL_RENDER_WAIT_MS = int(_get("CRAWL_RENDER_WAIT_MS", "5000"))  # network-idle wait per page
 
 

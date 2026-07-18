@@ -1,0 +1,82 @@
+# Full stack on one GPU machine: chat LLM + embeddings + Qdrant + the app.
+#
+#   1. Put your .gguf files in ./models/ (or set MODELS_DIR)
+#   2. Set CHAT_MODEL_FILE / EMBED_MODEL_FILE below or in .env
+#   3. docker compose up -d
+#   4. Ingest: docker compose run --rm app website-ai-helper ingest https://site.com --collection site
+#
+# GPU access requires the NVIDIA driver + nvidia-container-toolkit on the host
+# (https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/).
+# Compose reads variable defaults from this file and overrides from ./.env.
+
+services:
+  llm:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    command: >
+      -m /models/${CHAT_MODEL_FILE:-Qwen3-14B-Instruct-Q4_K_M.gguf}
+      -ngl 99 -np ${LLM_SLOTS:-2} -c ${LLM_CTX:-16384} --cache-reuse 256
+      --jinja --host 0.0.0.0 --port 8080 --alias local-chat
+    volumes:
+      - ${MODELS_DIR:-./models}:/models:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  embed:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    command: >
+      -m /models/${EMBED_MODEL_FILE:-bge-m3-Q8_0.gguf}
+      --embedding --pooling mean -ngl 99 -c 2048 -b 2048 -ub 2048
+      --host 0.0.0.0 --port 8081 --alias local-embed
+    volumes:
+      - ${MODELS_DIR:-./models}:/models:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+
+  app:
+    build: .
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      LLM_BASE_URL: http://llm:8080/v1
+      EMBED_BASE_URL: http://embed:8081/v1
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-default}
+      EMBED_DIM: ${EMBED_DIM:-1024}
+      TOP_K: ${TOP_K:-6}
+      SITE_NAME: ${SITE_NAME:-this website}
+      SITE_NAMES: ${SITE_NAMES:-}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      QA_TOKEN: ${QA_TOKEN:-}
+      FREQUENCY_PENALTY: ${FREQUENCY_PENALTY:-0.4}
+      PRESENCE_PENALTY: ${PRESENCE_PENALTY:-0.4}
+      MAX_TOKENS: ${MAX_TOKENS:-500}
+      CRAWL_MAX_PAGES: ${CRAWL_MAX_PAGES:-200}
+    volumes:
+      - app_data:/app/data
+    depends_on:
+      - llm
+      - embed
+      - qdrant
+    restart: unless-stopped
+
+volumes:
+  qdrant_storage:
+  app_data:

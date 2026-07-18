@@ -1,0 +1,9 @@
+.venv/
+data/
+models/
+*.gguf
+.env
+.git/
+__pycache__/
+*.pyc
+qdrant/

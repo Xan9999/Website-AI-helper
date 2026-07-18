@@ -35,5 +35,9 @@ if (-not (Test-Path $model)) {
     exit 1
 }
 
-& $server -m "$model" --embedding --pooling mean -ngl 99 `
+# -ngl 0 = run embeddings on CPU. A query embedding is one short text — CPU
+# does it in milliseconds, and keeping this model out of VRAM leaves the whole
+# GPU to the chat model (a 14B + KV cache already fills an 11 GB card; sharing
+# it with the embed model caused Vulkan device-lost crashes under load).
+& $server -m "$model" --embedding --pooling mean -ngl 0 `
   -c 2048 -b 2048 -ub 2048 --host 127.0.0.1 --port 8081 --alias local-embed

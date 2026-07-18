@@ -256,10 +256,63 @@ All via `.env` or CLI flags (see `.env.example`). Common knobs:
 | `QDRANT_COLLECTION` | Knowledge base name — **one per site** |
 | `TOP_K`, `CHUNK_SIZE` | Retrieval tuning |
 | `FREQUENCY_PENALTY`, `PRESENCE_PENALTY`, `MAX_TOKENS` | Anti-repetition / runaway-generation guards |
+| `SITE_NAMES` | Per-collection site names for multi-tenant serving (`acme=Acme Shop,adr=Adrlandia`) |
 | `CRAWL_MAX_PAGES`, `CRAWL_SAME_DOMAIN` | Crawl scope |
 | `CRAWL_PDFS`, `CRAWL_PDF_MAX_MB` | Ingest linked PDF files (default on, 20 MB cap) |
 | `CRAWL_RENDER`, `CRAWL_RENDER_WAIT_MS` | Render JS with a headless browser (`--render`) and settle time |
 | `ALLOWED_ORIGINS` | Comma-separated origins allowed to call `/chat`; empty = allow any (dev only) |
+
+| `PAGE_MAX_CHARS` | Max chars of the visitor's current page put in the prompt (default 1500; bigger = slower first token) |
+| `QUERY_REWRITE` | Rewrite follow-ups into standalone search queries (default on) |
+| `BOILERPLATE_STRIP` (+`_MIN_PAGES`, `_PAGE_FRACTION`) | Remove repeated nav/cookie/footer lines at ingest (default on) |
+
+## Deploying on a GPU / AI compute server
+
+The Python app is fully portable; only the launcher scripts are OS-specific
+(`scripts/*.ps1` for Windows, `scripts/*.sh` for Linux/macOS). Two paths:
+
+### Path A — Docker Compose (recommended: one command, no builds)
+
+Runs the whole stack — CUDA-accelerated chat + embedding llama.cpp servers,
+Qdrant, and the app — from official images. Host needs the NVIDIA driver and
+[nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/).
+
+```bash
+git clone https://github.com/Xan9999/Website-AI-helper && cd Website-AI-helper
+mkdir models   # put your .gguf files here (chat model + bge-m3)
+cp .env.example .env   # then set at least: CHAT_MODEL_FILE, EMBED_MODEL_FILE, QA_TOKEN, ALLOWED_ORIGINS
+
+docker compose up -d
+docker compose run --rm app website-ai-helper ingest https://client-site.com --collection clientsite
+curl http://localhost:8000/health
+```
+
+Compose-specific variables (set in `.env`): `CHAT_MODEL_FILE` / `EMBED_MODEL_FILE`
+(filenames inside `./models`), `MODELS_DIR`, `LLM_CTX` (total context; with
+24 GB+ VRAM raise it, e.g. 32768), `LLM_SLOTS` (parallel generations, default 2),
+`APP_PORT`. Larger models are just a bigger `.gguf` in `./models` + a
+`CHAT_MODEL_FILE` change + `docker compose up -d llm`.
+
+### Path B — bare metal (systemd-friendly)
+
+1. Build llama.cpp with CUDA: `cmake -B build -DGGML_CUDA=ON && cmake --build build -j`
+   (or grab a prebuilt release binary), and download a Qdrant release binary.
+2. `python -m venv .venv && .venv/bin/pip install .` in the repo.
+3. Fill `.env` (`LLAMA_SERVER`, `CHAT_MODEL`, `EMBED_MODEL_PATH`, `QDRANT_BIN`,
+   `QDRANT_URL=http://127.0.0.1:6333`, ...).
+4. Start the three services + app — same layout as on Windows:
+   ```bash
+   scripts/start-qdrant.sh &
+   scripts/start-embeddings.sh &
+   scripts/start-llm.sh &
+   website-ai-helper serve --host 0.0.0.0 --port 8000
+   ```
+   For production, wrap each of the four in a systemd unit (`Restart=always`)
+   instead of `&`. `LLM_CTX` (default 16384) and `EMBED_NGL` tune GPU use.
+
+Either way, expose port 8000 through your reverse proxy / Cloudflare Tunnel
+exactly as described below, and set `ALLOWED_ORIGINS` + `QA_TOKEN` before
+going live.
 
 ## Embedding the widget on your site
 
@@ -359,6 +412,10 @@ one snippet handles every client site:
   --collection acme`). One backend + one snippet template serves every client;
   swap the `client_id` per site. Leave it blank to fall back to this install's
   default `QDRANT_COLLECTION`.
+- Give each site a display name via `SITE_NAMES` in `.env`
+  (`SITE_NAMES=acme=Acme Shop,adr=Adrlandia`) — the agent introduces itself as
+  "assistant for <name>", resolved per request from the `client_id`. Sites
+  without an entry fall back to the generic `SITE_NAME`.
 - `language` only picks the widget's UI strings (button labels, placeholder —
   currently `en`/`it`/`sl`, defaulting to `en`); the assistant itself already
   answers in whatever language the visitor actually types.
@@ -392,6 +449,13 @@ to the install's default collection.
 collection; the structured-DB tools (`structured.py`) still hit one shared
 demo SQLite regardless of `client_id`. Multi-tenant structured data needs
 per-client DB wiring, not yet implemented.
+
+**Concurrent visitors:** the app handles simultaneous requests fine, but
+`llama-server` generates ONE answer at a time by default — a second question
+(from any site) queues behind the first. Add `-np 2` to the llama-server
+flags (in `scripts/start-llm.ps1`) to interleave two generations in parallel.
+Trade-off: `-np N` splits the context window (`-c`) N ways, so raise `-c`
+accordingly (e.g. `-c 16384 -np 2` keeps 8192 per slot).
 
 ## Conversation logging & QA review
 
@@ -444,6 +508,64 @@ browser widget ─POST /chat→ FastAPI ──┤
 The model answers from retrieved content, calls DB tools for live facts, and
 streams the grounded answer back — following a strict source-precedence rule
 (tool results > current page > website content).
+
+## Answer-quality strategy
+
+Three techniques work together so the model sees the *right* context. What
+happens to a question, end to end:
+
+```
+ingest:  crawl → STRIP BOILERPLATE → chunk → dense vector + sparse vector → Qdrant
+query:   message ──(follow-up?)──> REWRITE to standalone query
+                                      │ embed          │ tokenize
+                                      ▼                ▼
+                               dense search      lexical search
+                                      └───── RRF fusion ─────┘ → top-K chunks → prompt
+```
+
+### 1. Boilerplate stripping (ingest-time)
+
+Crawled pages repeat the same cookie banner, menu, and footer on every page.
+Left in, that text is embedded into every chunk's vector (pulling all vectors
+toward each other, blurring search) and wastes prompt tokens. At ingest, any
+line appearing on ≥ 30% of crawled pages (min 4) is removed before chunking;
+pages that were pure boilerplate are dropped entirely. Knobs:
+`BOILERPLATE_STRIP=1`, `BOILERPLATE_MIN_PAGES=4`, `BOILERPLATE_PAGE_FRACTION=0.3`.
+
+### 2. Follow-up query rewriting (query-time)
+
+Retrieval embeds only the latest message, so in "do you make winders?" →
+*"how much does it cost?"* the follow-up used to search for a generic price
+question and retrieve junk. Now one small non-streamed LLM call rewrites
+follow-ups into standalone queries ("how much does the automatic winder
+cost?"), resolving pronouns from the conversation and keeping the visitor's
+language. First messages are never rewritten (zero extra latency); failures
+fall back to the raw message. Knob: `QUERY_REWRITE=1`.
+
+### 3. Hybrid retrieval — dense + lexical with RRF fusion (query-time)
+
+Dense embeddings (bge-m3) capture *meaning* — "machine that rolls up foam"
+finds the winder page — but are weak at exact identifiers: "EXT120" embeds
+near generic machinery text. Keyword search has the opposite profile. Each
+chunk is therefore stored with TWO vectors: the dense embedding, plus a
+sparse term-frequency vector of its words (lowercased, diacritics folded so
+"celade" matches "čelade", hashed to stable ids — see `lexical.py`; Qdrant
+weighs rare terms higher server-side via IDF). Each
+query runs both searches and Qdrant merges the two rankings with Reciprocal
+Rank Fusion — a chunk ranked high by either meaning OR exact keywords makes
+the final top-K.
+
+**Upgrading existing collections:** hybrid applies to collections created by
+this version. Older (dense-only) collections keep working unchanged; to
+upgrade one, delete and re-ingest it (see "Re-ingesting a site"). Note that
+hybrid search scores are rank-based (~0.01–0.03), not cosine similarities —
+keep `SCORE_THRESHOLD=0` for hybrid collections.
+
+Also part of the quality picture: retrieved chunks are deduplicated (the same
+page crawled under two URLs no longer fills two top-K slots), and linked PDFs
+are ingested (price lists, brochures). Natural next upgrades, in order of
+impact: a cross-encoder reranker (llama.cpp supports `bge-reranker-v2-m3`
+natively), structure-aware chunking, and a larger chat model.
 
 ## Notes / limitations
 

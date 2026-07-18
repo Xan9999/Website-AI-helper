@@ -84,6 +84,51 @@ def _fetch_pdf_page(url: str) -> dict | None:
     return {"url": url, "title": title, "text": text}
 
 
+def strip_boilerplate(pages: list[dict]) -> list[dict]:
+    """Remove lines that repeat across many pages (cookie banners, nav menus,
+    footers) BEFORE chunking/embedding.
+
+    Why: crawled pages carry the same navigation/footer/cookie text on every
+    page. Left in, that text (a) gets embedded into every chunk's vector,
+    pulling all vectors toward each other and blurring retrieval, and (b)
+    wastes prompt tokens on text the model should never quote. Structural
+    stripping at parse time (nav/footer tags) catches most of it, but themes
+    that render menus in plain divs — or per-page cookie notices — slip
+    through; this frequency-based pass catches those.
+
+    A line counts as boilerplate when it appears (exactly, whitespace-trimmed)
+    on at least BOILERPLATE_MIN_PAGES pages AND on at least
+    BOILERPLATE_PAGE_FRACTION of all crawled pages. With fewer than
+    BOILERPLATE_MIN_PAGES pages total there is no reliable frequency signal,
+    so nothing is stripped."""
+    if len(pages) < config.BOILERPLATE_MIN_PAGES:
+        return pages
+
+    page_counts: dict[str, int] = {}
+    for pg in pages:
+        for line in set(ln.strip() for ln in pg["text"].splitlines() if ln.strip()):
+            page_counts[line] = page_counts.get(line, 0) + 1
+
+    threshold = max(config.BOILERPLATE_MIN_PAGES,
+                    int(len(pages) * config.BOILERPLATE_PAGE_FRACTION))
+    boilerplate = {ln for ln, n in page_counts.items() if n >= threshold}
+    if not boilerplate:
+        return pages
+
+    out = []
+    removed_chars = 0
+    for pg in pages:
+        kept = [ln for ln in pg["text"].splitlines() if ln.strip() not in boilerplate]
+        cleaned = "\n".join(kept).strip()
+        removed_chars += len(pg["text"]) - len(cleaned)
+        if cleaned:  # a page that was ONLY boilerplate carries no information
+            out.append({**pg, "text": cleaned})
+    print(f"Boilerplate: removed {len(boilerplate)} repeated lines "
+          f"(~{removed_chars} chars) across {len(pages)} pages; "
+          f"{len(pages) - len(out)} empty pages dropped.")
+    return out
+
+
 def chunk_text(text: str, size: int, overlap: int) -> list[str]:
     chunks, i, n = [], 0, len(text)
     step = max(1, size - overlap)
@@ -278,6 +323,8 @@ def crawl_and_ingest(url: str, render: bool | None = None) -> int:
     print(f"Crawling {url} (max {config.CRAWL_MAX_PAGES} pages, {mode}) "
           f"into collection '{config.QDRANT_COLLECTION}'...")
     pages = crawl(url, config.CRAWL_MAX_PAGES, config.CRAWL_SAME_DOMAIN, render=render)
+    if config.BOILERPLATE_STRIP:
+        pages = strip_boilerplate(pages)
     print(f"Crawled {len(pages)} pages. Embedding + storing...")
     total = ingest_pages(pages)
     print(f"Done. Ingested {total} chunks into '{config.QDRANT_COLLECTION}'.")

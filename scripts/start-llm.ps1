@@ -51,4 +51,13 @@ $cpuMoe = if ($env:CPU_MOE) { $env:CPU_MOE } else { "0" }
 # llama-server then rejects with a confusing "invalid argument: -".
 $moeArgs = @(if ($cpuMoe -eq "1") { "--cpu-moe" })
 
-& $server -m "$model" -ngl 99 -c 8192 --jinja --host 127.0.0.1 --port 8080 --alias local-chat @moeArgs
+# LLM_SLOTS (-np) = parallel chats; LLM_CTX (-c) is TOTAL context, split
+# across slots (8192 with 2 slots -> 4096/slot; the RAG prompt is ~2k tokens
+# so this fits). NOTE: a bigger -c needs VRAM beyond the model weights —
+# 16384 with Qwen3-14B OOMs an 11 GB card, hence the small default here.
+# --cache-reuse lets the server keep KV-cache for prompt parts matching a
+# previous request even past the first difference (big prefill savings on
+# follow-up questions that retrieve the same website chunks).
+$slots = if ($env:LLM_SLOTS) { $env:LLM_SLOTS } else { "2" }
+$ctx   = if ($env:LLM_CTX)   { $env:LLM_CTX }   else { "8192" }
+& $server -m "$model" -np $slots -ngl 99 -c $ctx --cache-reuse 256 --jinja --host 127.0.0.1 --port 8080 --alias local-chat @moeArgs
