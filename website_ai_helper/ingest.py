@@ -315,9 +315,19 @@ def crawl_and_ingest(url: str, render: bool | None = None) -> int:
     render = config.CRAWL_RENDER if render is None else render
     config.ensure_data_dir()
 
-    # Fail fast on a locked/unavailable vector store BEFORE crawling — a long
-    # crawl finishing only to fail at the last step (storing) wastes real time.
+    # Fail fast on a locked/unavailable vector store OR an unreachable
+    # embedding server BEFORE crawling — a long crawl finishing only to fail
+    # at the embed/store step wastes real time (a 176-page crawl once died
+    # exactly this way because only Qdrant was checked).
     vectorstore.get_client()
+    try:
+        embed_texts(["connectivity check"])
+    except Exception as exc:
+        raise SystemExit(
+            f"Embedding server unreachable at {config.EMBED_BASE_URL} ({exc}).\n"
+            "Start it first (scripts/start-embeddings.ps1 or .sh) — refusing "
+            "to crawl until embedding works, so no crawl time is wasted."
+        ) from exc
 
     mode = "rendered/JS" if render else "static"
     print(f"Crawling {url} (max {config.CRAWL_MAX_PAGES} pages, {mode}) "

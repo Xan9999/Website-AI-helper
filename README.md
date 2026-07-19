@@ -80,7 +80,7 @@ Ollama CPP LLM\
 ```
 
 ```powershell
-$env:LLAMA_SERVER="C:\path\to\llama-server.exe"; $env:CHAT_MODEL="..\models\Qwen2.5-7B-Instruct-Q4_K_M.gguf"
+$env:LLAMA_SERVER="C:\path\to\llama-server.exe"; $env:CHAT_MODEL="..\models\Qwen3-14B-Instruct-Q4_K_M.gguf"
 .\scripts\start-llm.ps1
 $env:EMBED_MODEL_PATH="..\models\bge-m3-Q8_0.gguf"
 .\scripts\start-embeddings.ps1
@@ -261,10 +261,11 @@ All via `.env` or CLI flags (see `.env.example`). Common knobs:
 | `CRAWL_PDFS`, `CRAWL_PDF_MAX_MB` | Ingest linked PDF files (default on, 20 MB cap) |
 | `CRAWL_RENDER`, `CRAWL_RENDER_WAIT_MS` | Render JS with a headless browser (`--render`) and settle time |
 | `ALLOWED_ORIGINS` | Comma-separated origins allowed to call `/chat`; empty = allow any (dev only) |
-
 | `PAGE_MAX_CHARS` | Max chars of the visitor's current page put in the prompt (default 1500; bigger = slower first token) |
 | `QUERY_REWRITE` | Rewrite follow-ups into standalone search queries (default on) |
 | `BOILERPLATE_STRIP` (+`_MIN_PAGES`, `_PAGE_FRACTION`) | Remove repeated nav/cookie/footer lines at ingest (default on) |
+| `LLM_SLOTS`, `LLM_CTX` | Parallel generations (`-np`) and TOTAL context tokens (`-c`, split across slots; keep ≈ `LLM_SLOTS`×4096). Used by all launch paths — scripts and Docker |
+| `QA_TOKEN` | Enables the private `/qa` conversation-review site (empty = disabled) |
 
 ## Deploying on a GPU / AI compute server
 
@@ -287,11 +288,12 @@ docker compose run --rm app website-ai-helper ingest https://client-site.com --c
 curl http://localhost:8000/health
 ```
 
-Compose-specific variables (set in `.env`): `CHAT_MODEL_FILE` / `EMBED_MODEL_FILE`
-(filenames inside `./models`), `MODELS_DIR`, `LLM_CTX` (total context; with
-24 GB+ VRAM raise it, e.g. 32768), `LLM_SLOTS` (parallel generations, default 2),
-`APP_PORT`. Larger models are just a bigger `.gguf` in `./models` + a
-`CHAT_MODEL_FILE` change + `docker compose up -d llm`.
+Compose-specific variables (set in `.env`): `CHAT_MODEL_FILE` /
+`EMBED_MODEL_FILE` (filenames inside `./models`), `MODELS_DIR`, `APP_PORT`.
+`LLM_SLOTS` / `LLM_CTX` (see Configuration) apply here too — with 24 GB+
+VRAM raise them, e.g. `LLM_SLOTS=10` / `LLM_CTX=40960`. Larger models are
+just a bigger `.gguf` in `./models` + a `CHAT_MODEL_FILE` change +
+`docker compose up -d llm`.
 
 ### Path B — bare metal (systemd-friendly)
 
@@ -393,6 +395,124 @@ one stable hostname serves every client site (each with its own
 directly exposed to inbound internet traffic. Remember to set
 `ALLOWED_ORIGINS` once it's live.
 
+### HTTPS via port-forwarding: nginx + Let's Encrypt (no tunnel)
+
+If you'd rather expose the server directly (any DNS provider works — no
+nameserver changes needed):
+
+1. **DNS**: add an `A` record `chat.yourdomain.com -> your public IP`. On a
+   home connection the IP changes — keep the record updated (DDNS) or use a
+   fixed-IP server.
+2. **Router**: forward TCP **80 and 443** to the server. Do NOT forward 8000 —
+   run the app on `--host 127.0.0.1` so only nginx is reachable from outside.
+3. **nginx + certbot** (Linux):
+   ```bash
+   sudo apt install nginx certbot python3-certbot-nginx
+   ```
+   Site config proxying to the app:
+   ```nginx
+   server {
+       listen 80;
+       server_name chat.yourdomain.com;
+       location / {
+           proxy_pass http://127.0.0.1:8000;
+           proxy_http_version 1.1;
+           proxy_set_header Connection "";
+           proxy_set_header Host $host;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto $scheme;
+           # SSE streaming: without these nginx buffers the whole answer and
+           # the widget shows nothing until generation finishes.
+           proxy_buffering off;
+           proxy_cache off;
+           proxy_read_timeout 300s;
+       }
+   }
+   ```
+   ```bash
+   sudo ln -s /etc/nginx/sites-available/chat /etc/nginx/sites-enabled/
+   sudo nginx -t && sudo systemctl reload nginx
+   sudo certbot --nginx -d chat.yourdomain.com   # gets cert, adds 443 + redirect, auto-renews
+   ```
+4. **Windows variant** (nginx + win-acme — certbot doesn't exist on Windows):
+   1. Unzip nginx from [nginx.org/en/download.html](https://nginx.org/en/download.html)
+      to `C:\nginx` — avoid `C:\Program Files\...`: nginx treats unquoted
+      paths with spaces as multiple arguments (`invalid number of arguments
+      in "root" directive`); if you must use a spaced path, double-quote it
+      in every directive (`root "C:/Program Files/nginx/acme";`, same for
+      the `ssl_certificate*` lines). Open the firewall:
+      ```powershell
+      New-NetFirewallRule -DisplayName "nginx http"  -Direction Inbound -Protocol TCP -LocalPort 80  -Action Allow
+      New-NetFirewallRule -DisplayName "nginx https" -Direction Inbound -Protocol TCP -LocalPort 443 -Action Allow
+      ```
+   2. In `C:\nginx\conf\nginx.conf`, add the same `server` block as above
+      inside `http { }`, plus a webroot for the certificate challenge:
+      ```nginx
+      location /.well-known/acme-challenge/ { root C:/nginx/acme; }
+      ```
+      Create `C:\nginx\acme`, then start nginx: `cd C:\nginx; .\nginx.exe`
+      (config test: `.\nginx.exe -t`, reload after edits: `.\nginx.exe -s reload`).
+   3. Get the certificate with [win-acme](https://www.win-acme.com/) (single
+      `wacs.exe`, run as admin). Pick: full options (`M`) → `Manual input` →
+      host `chat.yourdomain.com` → validation `[http] Save verification files
+      on (network) path` → path `C:\nginx\acme` → store `PEM encoded files` →
+      path `C:\nginx\certs`. win-acme validates through the running nginx,
+      writes `chat.yourdomain.com-chain.pem` + `-key.pem`, and registers a
+      Windows scheduled task that renews automatically.
+   4. Add the HTTPS server block to `nginx.conf` and reload:
+      ```nginx
+      server {
+          listen 443 ssl;
+          server_name chat.yourdomain.com;
+          ssl_certificate     C:/nginx/certs/chat.yourdomain.com-chain.pem;
+          ssl_certificate_key C:/nginx/certs/chat.yourdomain.com-key.pem;
+          location / { # same proxy settings as the port-80 block above
+              proxy_pass http://127.0.0.1:8000;
+              proxy_http_version 1.1;
+              proxy_set_header Connection "";
+              proxy_set_header Host $host;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+              proxy_buffering off;
+              proxy_cache off;
+              proxy_read_timeout 300s;
+          }
+      }
+      ```
+      In the port-80 block, replace `location /` with a redirect:
+      `return 301 https://$host$request_uri;` (keep the acme-challenge
+      location so renewals keep working).
+   5. Start nginx at boot: Task Scheduler → new task, run whether user is
+      logged on or not, action `C:\nginx\nginx.exe`, start in `C:\nginx`
+      (or wrap it as a service with [NSSM](https://nssm.cc/)).
+
+`proxy_buffering off` + `proxy_http_version 1.1` are load-bearing: `/chat`
+streams Server-Sent Events, and nginx's default buffering would freeze the
+widget until the full answer is generated. Set `ALLOWED_ORIGINS` once live.
+
+**Order of operations matters:** nginx refuses to start while
+`ssl_certificate` points at files that don't exist yet. Bring it up in this
+order: port-80 block only (with the acme-challenge location) → start nginx →
+run certbot / win-acme → only then add the 443 block, with every
+`chat.yourdomain.com` placeholder replaced by your real subdomain → reload.
+DNS (`A` record live) and the port-80 forward must be in place *before*
+certificate validation — Let's Encrypt reaches in from the internet.
+
+> **Symptom decoder (certificate setup):**
+> - nginx `invalid number of arguments in "root" directive` — unquoted path
+>   with spaces (see step 1).
+> - nginx `cannot load certificate ... BIO_new_file() failed ... no such
+>   file` — the 443 block references PEM files that don't exist yet (wrong
+>   path/filename, placeholder domain still in the config, or win-acme
+>   hasn't succeeded yet). Comment the 443 block out until it has.
+> - win-acme `Error preparing for challenge answer` +
+>   `UnauthorizedAccessException` in its log
+>   (`C:\ProgramData\win-acme\...\Log\`) — wacs.exe wasn't run **as
+>   administrator**, so it can't write the challenge file under
+>   `C:\Program Files`. Re-run elevated.
+> - win-acme validation fails with a timeout/unreachable error — DNS record
+>   missing/stale or router isn't forwarding port 80 to this machine yet.
+
 ### One-line async embed (recommended)
 
 `GET /widget.js` serves a self-contained loader script — no markup to copy,
@@ -450,12 +570,13 @@ collection; the structured-DB tools (`structured.py`) still hit one shared
 demo SQLite regardless of `client_id`. Multi-tenant structured data needs
 per-client DB wiring, not yet implemented.
 
-**Concurrent visitors:** the app handles simultaneous requests fine, but
-`llama-server` generates ONE answer at a time by default — a second question
-(from any site) queues behind the first. Add `-np 2` to the llama-server
-flags (in `scripts/start-llm.ps1`) to interleave two generations in parallel.
-Trade-off: `-np N` splits the context window (`-c`) N ways, so raise `-c`
-accordingly (e.g. `-c 16384 -np 2` keeps 8192 per slot).
+**Concurrent visitors:** the app handles simultaneous requests fine;
+`llama-server` interleaves as many generations as `LLM_SLOTS` in `.env`
+(default 2 — a third simultaneous question queues briefly). Each slot gets
+`LLM_CTX ÷ LLM_SLOTS` context tokens, so raise them together (≈4096/slot;
+see the Configuration table) — and note both cost VRAM: e.g. an 11 GB card
+maxes out at `LLM_SLOTS=2` / `LLM_CTX=8192` with a 14B model, while a 32 GB
+card handles `LLM_SLOTS=10` / `LLM_CTX=40960` with a 32B model.
 
 ## Conversation logging & QA review
 
@@ -584,6 +705,13 @@ natively), structure-aware chunking, and a larger chat model.
   on vague queries with weak/ambiguous retrieval matches. `FREQUENCY_PENALTY`
   / `PRESENCE_PENALTY` (default 0.4) and `MAX_TOKENS` (default 500) reduce and
   bound this; a larger/stronger chat model is the more thorough fix.
+- **`/health` only checks the app + Qdrant, not the LLM servers** — the stack
+  can look healthy while chat is down. In particular, a GPU driver reset
+  (Vulkan `ErrorDeviceLost`, typically under VRAM pressure from other GPU
+  apps) leaves llama-server answering `/health` with 200 while every
+  completion fails — if the widget hangs but health is green, restart
+  llama-server. Avoid running games/heavy GPU apps next to a model that
+  nearly fills VRAM.
 
 ## License
 
