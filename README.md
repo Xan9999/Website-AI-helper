@@ -312,9 +312,43 @@ just a bigger `.gguf` in `./models` + a `CHAT_MODEL_FILE` change +
    For production, wrap each of the four in a systemd unit (`Restart=always`)
    instead of `&`. `LLM_CTX` (default 16384) and `EMBED_NGL` tune GPU use.
 
-Either way, expose port 8000 through your reverse proxy / Cloudflare Tunnel
-exactly as described below, and set `ALLOWED_ORIGINS` + `QA_TOKEN` before
-going live.
+### Path C — container GPU rentals (Vast.ai, RunPod, …)
+
+Marketplace rentals hand you a **container**, not a VM — Docker Compose won't
+run inside, so use Path B's flow with these container-specific adjustments
+(each learned the hard way):
+
+1. **Rent right:** on-demand (not interruptible), verified/high-reliability
+   host, and set the **disk slider ≥ 60 GB** — disk is fixed at creation and
+   "container memory 100%" means your allocation is full, not the host's.
+2. **Pre-flight before any setup** (destroy the instance immediately if
+   either fails):
+   ```bash
+   nvidia-smi   # each GPU ~0-500 MiB used at idle. Gigabytes used with no
+                # visible processes = ANOTHER TENANT is on your GPUs
+                # (container nvidia-smi hides foreign PIDs but memory totals
+                # are real) — destroy and report the host.
+   df -h ~      # ~30 GB free for a 32B model + venv + qdrant
+   ```
+3. **Port collisions:** templates often run Jupyter on **8080** — set
+   `LLM_PORT=8082` + `LLM_BASE_URL=http://127.0.0.1:8082/v1` in `.env`. If
+   8000 is taken too, `serve --port 8010`.
+4. **Install editable** (`pip install -e .`) so `git pull` updates the
+   running code without a reinstall; use absolute paths in `.env` (`/root/...`
+   — `~` is NOT expanded), and start each service with `nohup ... &` so it
+   survives the terminal.
+5. **Reaching it:** the panel's port mappings / tunnel links are the
+   provider's token-authenticated portal — not usable for the widget. Either
+   SSH-forward from a machine you trust (`ssh -N -L 8000:localhost:8010
+   root@<instance>` — zero public exposure, can sit behind your existing
+   nginx/domain as a relay), or run a Cloudflare quick tunnel on the
+   instance for a temporary public HTTPS URL.
+6. **Don't type credentials into a rented box** (the host owner can inspect
+   the disk): clone a public repo or `scp` a tarball; use throwaway tokens.
+
+Either way, expose the app port through your reverse proxy / Cloudflare
+Tunnel exactly as described below, and set `ALLOWED_ORIGINS` + `QA_TOKEN`
+before going live.
 
 ## Embedding the widget on your site
 
