@@ -122,11 +122,7 @@ def _stream_pass(client, messages: list[dict], use_tools: bool) -> Iterator[dict
                   max_tokens=config.MAX_TOKENS,
                   frequency_penalty=config.FREQUENCY_PENALTY,
                   presence_penalty=config.PRESENCE_PENALTY,
-                  # Qwen3's hybrid thinking mode is on by default and would
-                  # otherwise burn the whole token budget on hidden
-                  # <think>...</think> reasoning instead of the answer.
-                  # Models without this template var (e.g. Qwen2.5) ignore it.
-                  extra_body={"chat_template_kwargs": {"enable_thinking": False}})
+                  extra_body=config.LLM_EXTRA_BODY)
     if use_tools:
         kwargs["tools"] = structured.TOOLS
         kwargs["tool_choice"] = "auto"
@@ -183,7 +179,7 @@ def _rewrite_query(client, history: list[dict], message: str) -> str:
             }],
             temperature=0.0,
             max_tokens=80,
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            extra_body=config.LLM_EXTRA_BODY,
         )
         rewritten = (resp.choices[0].message.content or "").strip().strip('"')
         # A degenerate rewrite (empty, or way longer than a search query

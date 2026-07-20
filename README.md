@@ -120,6 +120,57 @@ VRAM, a dense model that does fit is ~20x faster. `start-llm.ps1` still
 supports MoE offload via `CPU_MOE=1` in `.env` for cards/models where the
 math works out.
 
+### Using the ChatGPT (OpenAI-hosted) API
+
+You don't need a local server at all — this app talks to any endpoint through
+the standard `openai` SDK, and `https://api.openai.com/v1` is just another
+OpenAI-compatible endpoint. Trade-off: no GPU/model-download hassle, but you
+pay per token and need an internet connection.
+
+**1. Get an API key** from [platform.openai.com](https://platform.openai.com/api-keys).
+
+**2. Point `.env` at OpenAI for chat:**
+
+```
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_API_KEY=sk-...your real key...
+LLM_MODEL=gpt-4.1-mini
+LLM_EXTRA_BODY={}
+```
+
+`LLM_EXTRA_BODY` matters: the default value in `.env.example` disables Qwen3's
+"thinking" mode via a `chat_template_kwargs` field that only llama.cpp/vLLM
+understand — the real OpenAI API rejects unrecognized body fields, so this
+**must** be set to `{}` (or removed) once `LLM_BASE_URL` points at
+`api.openai.com`.
+
+Stick to a standard chat model (`gpt-4.1-mini`, `gpt-4o-mini`, etc.) rather
+than a reasoning/`o`-series model — reasoning models force `temperature=1`
+and use a different max-tokens parameter, neither of which this app sends.
+
+You can stop here and keep embeddings local (bge-m3 via `start-embeddings.ps1`)
+— only chat generation needs to change. If your local chat server
+(`start-llm.ps1`) is no longer needed, you can stop running it.
+
+**3. (Optional) Also move embeddings to OpenAI:**
+
+```
+EMBED_BASE_URL=https://api.openai.com/v1
+EMBED_API_KEY=sk-...your real key...
+EMBED_MODEL=text-embedding-3-small
+EMBED_DIM=1536
+EMBED_DOC_PREFIX=
+EMBED_QUERY_PREFIX=
+```
+
+(`text-embedding-3-large` gives `EMBED_DIM=3072` instead, at higher cost.)
+
+**Important:** switching embedding models changes the vector space — an
+existing Qdrant collection was built with the old model's vectors and isn't
+compatible with the new ones. Re-ingest every site after changing
+`EMBED_MODEL`/`EMBED_DIM` (see "Re-ingesting a site" below), or delete and
+recreate the collection first.
+
 ### GPU acceleration with Vulkan (optional)
 
 **Vulkan is not part of this package.** Website-AI-helper only talks HTTP to an
@@ -250,7 +301,10 @@ All via `.env` or CLI flags (see `.env.example`). Common knobs:
 
 | Var | Meaning |
 |---|---|
-| `LLM_BASE_URL` / `EMBED_BASE_URL` | Your chat / embedding endpoints |
+| `LLM_BASE_URL` / `EMBED_BASE_URL` | Your chat / embedding endpoints (any OpenAI-compatible server, incl. `https://api.openai.com/v1` — see "Using the ChatGPT (OpenAI-hosted) API") |
+| `LLM_API_KEY` / `EMBED_API_KEY` | API key for each endpoint (ignored by local servers, required by hosted APIs) |
+| `LLM_MODEL` / `EMBED_MODEL` | Model name each endpoint routes on (ignored by llama-server, required by hosted APIs) |
+| `LLM_EXTRA_BODY` | Extra JSON merged into chat requests; default disables Qwen3 "thinking" mode. Set to `{}` for hosted APIs, which reject unrecognized fields |
 | `EMBED_DIM` | Embedding dimensionality (must match the model) |
 | `QDRANT_URL` | Empty = embedded local folder (single-writer); set to a Qdrant server URL to allow concurrent ingest+serve |
 | `QDRANT_COLLECTION` | Knowledge base name — **one per site** |

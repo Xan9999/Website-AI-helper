@@ -14,6 +14,7 @@ with llama.cpp, Ollama, or any compatible server — local or remote.
 """
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -34,6 +35,13 @@ DATA_DIR = Path(_get("DATA_DIR", "data")).resolve()
 LLM_BASE_URL = _get("LLM_BASE_URL", "http://127.0.0.1:8080/v1")
 LLM_API_KEY = _get("LLM_API_KEY", "sk-local")   # llama.cpp ignores the value
 LLM_MODEL = _get("LLM_MODEL", "local-chat")
+# Extra JSON fields merged into every chat completion request body. Defaults
+# to disabling Qwen3's hybrid "thinking" mode (see agent.py), which is only
+# understood by llama.cpp/vLLM-style servers. Hosted APIs like OpenAI's real
+# api.openai.com reject unrecognized body fields, so set this to "{}" there.
+LLM_EXTRA_BODY = json.loads(_get(
+    "LLM_EXTRA_BODY", '{"chat_template_kwargs": {"enable_thinking": false}}'
+))
 
 # --- Embedding endpoint ---
 EMBED_BASE_URL = _get("EMBED_BASE_URL", "http://127.0.0.1:8081/v1")
