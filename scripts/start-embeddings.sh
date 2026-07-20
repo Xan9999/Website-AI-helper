@@ -21,4 +21,4 @@ if [ ! -f "$MODEL" ]; then
 fi
 
 exec "$SERVER" -m "$MODEL" --embedding --pooling mean -ngl "${EMBED_NGL:-99}" \
-    -c 2048 -b 2048 -ub 2048 --host 127.0.0.1 --port 8081 --alias local-embed
+    -c 2048 -b 2048 -ub 2048 --host 127.0.0.1 --port "${EMBED_PORT:-8081}" --alias local-embed

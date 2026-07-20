@@ -60,4 +60,5 @@ $moeArgs = @(if ($cpuMoe -eq "1") { "--cpu-moe" })
 # follow-up questions that retrieve the same website chunks).
 $slots = if ($env:LLM_SLOTS) { $env:LLM_SLOTS } else { "2" }
 $ctx   = if ($env:LLM_CTX)   { $env:LLM_CTX }   else { "8192" }
-& $server -m "$model" -np $slots -ngl 99 -c $ctx --cache-reuse 256 --jinja --host 127.0.0.1 --port 8080 --alias local-chat @moeArgs
+$port  = if ($env:LLM_PORT)  { $env:LLM_PORT }  else { "8080" }
+& $server -m "$model" -np $slots -ngl 99 -c $ctx --cache-reuse 256 --jinja --host 127.0.0.1 --port $port --alias local-chat @moeArgs

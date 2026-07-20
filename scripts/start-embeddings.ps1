@@ -39,5 +39,6 @@ if (-not (Test-Path $model)) {
 # does it in milliseconds, and keeping this model out of VRAM leaves the whole
 # GPU to the chat model (a 14B + KV cache already fills an 11 GB card; sharing
 # it with the embed model caused Vulkan device-lost crashes under load).
+$port = if ($env:EMBED_PORT) { $env:EMBED_PORT } else { "8081" }
 & $server -m "$model" --embedding --pooling mean -ngl 0 `
-  -c 2048 -b 2048 -ub 2048 --host 127.0.0.1 --port 8081 --alias local-embed
+  -c 2048 -b 2048 -ub 2048 --host 127.0.0.1 --port $port --alias local-embed

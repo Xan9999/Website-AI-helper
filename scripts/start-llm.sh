@@ -5,6 +5,9 @@
 #   CHAT_MODEL   = path to the chat .gguf
 #   LLM_CTX      = total context size (default 16384; split across slots by
 #                  -np — lower it if the model + KV cache overflows your VRAM)
+#   LLM_PORT     = listen port (default 8080 — change if something else owns
+#                  it, e.g. Jupyter on Vast.ai templates; set LLM_BASE_URL in
+#                  .env to the same port so the app follows)
 #   CPU_MOE=1    = keep MoE expert weights in RAM (only for MoE models)
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
@@ -29,4 +32,4 @@ MOE_ARGS=()
 # --cache-reuse keeps KV-cache for prompt parts matching a previous request
 # (big prefill savings on follow-ups retrieving the same website chunks).
 exec "$SERVER" -m "$MODEL" -np "${LLM_SLOTS:-2}" -ngl 99 -c "${LLM_CTX:-16384}" --cache-reuse 256 \
-    --jinja --host 127.0.0.1 --port 8080 --alias local-chat "${MOE_ARGS[@]}"
+    --jinja --host 127.0.0.1 --port "${LLM_PORT:-8080}" --alias local-chat "${MOE_ARGS[@]}"
