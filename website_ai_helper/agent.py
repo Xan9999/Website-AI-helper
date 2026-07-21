@@ -59,7 +59,7 @@ SYSTEM_PROMPT = (
     "Example: asked 'where are the course dates?', list the actual dates from the "
     "context, then link the page for the full/updated list. Only point to a page "
     "without giving the facts when the context genuinely does not contain them.\n\n"
-    "Be concise. When you use website content, cite it inline by its [n] label. "
+    "Be concise."
     "Do NOT append a separate list of sources or a 'Sources:' line at the end — "
     "the chat interface already displays the sources next to your answer. "
     "When you point the user to a page, write the URL as a markdown link, e.g. "
